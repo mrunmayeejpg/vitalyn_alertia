@@ -1,136 +1,142 @@
 🩺 Vitalyn Alertia
-AI-Driven ICU Patient Risk Monitoring Dashboard
 
-Hackathon Project – VORTEX 2026
+Live AI-based Patient Risk Monitoring Dashboard
 
-🚨 Problem Statement
+Vitalyn Alertia is a real-time patient monitoring system designed to help hospitals prioritize patients based on their vital signs and predicted risk levels using AI-inspired calculations. It combines dynamic dashboards, live simulations, and risk scoring to provide actionable insights to doctors instantly.
 
-In many hospitals—especially rural and understaffed regions—a single doctor or nurse is responsible for dozens of patients.
-Critical deterioration often goes unnoticed until it is too late.
+🚀 Key Features
 
-Sepsis, respiratory failure, and sudden hypotension can escalate within minutes.
+Real-Time Patient Monitoring
 
-👉 Vitalyn Alertia was built to detect early warning signs, prioritize critical patients, and support doctors with AI-powered risk insights—not replace them.
+Displays vital signs (RR, BP, HR, Temp) for multiple patients.
 
-💡 Solution Overview
+Patients dynamically reorder based on risk, simulating real-world triage.
 
-Vitalyn Alertia is a real-time ICU command dashboard that continuously:
+AI-Powered Risk Assessment
 
-Monitors patient vitals
+Each patient’s risk score is calculated using vital signs and mental status.
 
-Calculates qSOFA scores
+Risk levels are categorized as Critical, Moderate, or Stable.
 
-Predicts short-term deterioration risk using an ML-based model
+Top 5 critical patients trigger alerts and are highlighted visually.
 
-Visually ranks patients so doctors act before emergencies occur
+Interactive Analytics
 
-⚠️ This system is strictly a screening & risk-support tool — not a diagnostic system.
+Click on a patient card to see historical trends of vitals and AI risk score.
 
-🧠 Core Features
-🔹 Real-Time Patient Monitoring
+Graphs dynamically show how patient conditions change over time.
 
-Respiratory Rate (RR)
+Doctor-Friendly UI
 
-Blood Pressure (BP)
+Green background and clear visual cues.
 
-Heart Rate (HR)
+Color-coded patient cards for quick understanding.
 
-Temperature
+Login system for secure access.
 
-Mental Status
+🧠 AI & ML Implementation
+1. Rule-Based AI Risk Score (Current Implementation)
 
-Vitals update every 4 seconds via live simulation.
+Currently, Vitalyn Alertia uses a rule-based AI approach, inspired by clinical risk scoring:
 
-🔹 qSOFA Rule-Based Screening
+Step 1: qSOFA Score
 
-Automatically computes qSOFA score using:
+qSOFA (quick Sequential Organ Failure Assessment) score is calculated based on 3 parameters:
 
-RR ≥ 22
+Respiration Rate (RR ≥ 22 → +1)
 
-SBP ≤ 100
+Blood Pressure (BP ≤ 100 → +1)
 
-Altered mental status
+Mental Status Confused → +1
 
-Provides clinically interpretable risk flags.
+The qSOFA score ranges from 0 to 3, which reflects the severity of potential deterioration.
 
-🔹 Machine Learning–Inspired AI Risk Model (Key Feature)
+Step 2: AI Risk Calculation
 
-A lightweight ML-style risk model estimates probability of deterioration using:
+The AI risk score combines normalized vitals and qSOFA score:
 
-Current vitals
+\text{AI_Risk} = 0.45 \times \frac{RR}{35} + 0.35 \times \left(1 - \frac{BP}{160}\right) + 0.20 \times \frac{\text{qSOFA}}{3}
 
-qSOFA score
+This produces a value between 0 and 1.
 
-Normalized physiological thresholds
+Thresholds for categorization:
 
-Output:
+Critical: Top 5 AI_Risk patients
 
-A continuous risk score (0–1)
+Moderate: AI_Risk > 0.45
 
-Short-term deterioration predictions (30 min – 6 hrs)
+Stable: AI_Risk ≤ 0.45
 
-Patients are auto-classified into:
+This is essentially a lightweight predictive model, capable of real-time patient triage.
 
-🔴 Critical
+2. Real-Time Simulation
 
-🟡 Moderate
+Patient vitals are updated every 4 seconds.
 
-🟢 Stable
+Risk scores are recalculated live.
 
-🔹 Live ICU Command Board
+Patient cards move dynamically to reflect changes in risk-based priority, giving doctors a visual sense of urgency.
 
-Patients auto-sorted by risk
+💡 Potential ML Extensions
 
-Critical patients float to the top
+The current system uses a rule-based scoring mechanism, but it can be extended into a full ML-based predictive dashboard:
 
-Smooth UI animations for rapid attention
+Predictive Modeling
 
-🔹 Doctor-Only Secure Login
+Collect historical patient data to train models (Logistic Regression, Random Forest, Gradient Boosting, or Neural Networks).
 
-Restricted dashboard access
+Predict risk of deterioration, ICU admission, or need for emergency intervention.
 
-Doctor selection for accountability
+Time-Series Forecasting
 
-🔹 Patient Trend Analytics
+Use sequential models (LSTM, GRU) to predict vital trends and future risk scores.
 
-Time-series plots of:
+Multi-Feature Integration
 
-RR
+Include lab test results, imaging, demographics, and comorbidities to improve predictive accuracy.
 
-BP
+Alert Optimization
 
-AI Risk
+Automatically trigger alerts via email/SMS for high-risk patients.
 
-Helps doctors observe worsening trends, not just static values
+Prioritize doctors’ actions based on predicted severity.
 
-🏥 Why This Matters (Especially for Villages)
+Hospital-Scale Deployment
 
-In many villages:
+Multi-hospital support to track hundreds of patients.
 
-There are too few doctors
+Aggregate AI predictions for hospital resource planning.
 
-ICU expertise is limited
+💻 Installation & Usage
+1. Clone the Repository
+git clone https://github.com/mrunmayeejpg/vitalyn_alertia.git
+cd vitalyn_alertia
 
-Delays cost lives
+2. Create a Virtual Environment (Optional)
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# macOS/Linux
+source venv/bin/activate
 
-💔 Vitalyn Alertia acts as a digital second pair of eyes, ensuring:
+3. Install Dependencies
+pip install -r requirements.txt
 
-No critical patient is silently ignored
+4. Run the Dashboard
+streamlit run app.py
 
-Doctors focus attention where it’s needed most
+5. Login
 
-Lives are saved through early escalation
+Username: admin
 
-🛠️ Tech Stack
+Password: admin123
 
-Frontend & Dashboard: Streamlit
+📊 Visual Features
 
-Data Processing: Pandas, NumPy
+Dynamic Patient Cards: Color-coded, move according to risk.
 
-Visualization: Matplotlib
+Trend Graphs: Larger, clean graphs showing vital trends and AI risk.
 
-AI Logic: Rule-based + ML-inspired risk scoring
+Alerts: Horizontal bars highlight patients needing immediate attention.
 
-Real-Time Simulation: Streamlit Auto Refresh
-
-Language: Python
+Doctor Panel: Shows on-duty doctor and logout option.
