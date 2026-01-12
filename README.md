@@ -57,10 +57,7 @@ The qSOFA score ranges from 0 to 3, which reflects the severity of potential det
 
 Step 2: AI Risk Calculation
 
-The AI risk score combines normalized vitals and qSOFA score:
-
-\text{AI_Risk} = 0.45 \times \frac{RR}{35} + 0.35 \times \left(1 - \frac{BP}{160}\right) + 0.20 \times \frac{\text{qSOFA}}{3}
-
+The AI risk score combines normalized vitals and qSOFA score
 This produces a value between 0 and 1.
 
 Thresholds for categorization:
