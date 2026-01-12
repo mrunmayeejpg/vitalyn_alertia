@@ -1,7 +1,7 @@
 import streamlit as st
 
 # ---------------------------------------------------
-# PAGE CONFIG (MUST BE FIRST)
+# PAGE CONFIG — MUST BE FIRST
 # ---------------------------------------------------
 st.set_page_config(page_title="Vitalyn Alertia", layout="wide")
 
@@ -13,52 +13,25 @@ from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=4000, key="refresh")
 
 # ---------------------------------------------------
-# LOGIN SYSTEM
-# ---------------------------------------------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-def login():
-    st.markdown(
-        "<h2 style='text-align:center; color:#064e3b;'>🔐 Vitalyn Alertia Login</h2>",
-        unsafe_allow_html=True
-    )
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if u == "admin" and p == "admin123":
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
-
-def logout():
-    st.session_state.logged_in = False
-    st.rerun()
-
-if not st.session_state.logged_in:
-    login()
-    st.stop()
-
-# ---------------------------------------------------
 # HEADER
 # ---------------------------------------------------
-st.title("🩺Vitalyn Alertia")
+st.title("🩺 Vitalyn Alertia")
 st.caption("Live AI-based Patient Risk Monitoring Dashboard")
 
 # ---------------------------------------------------
-# SIDEBAR — DOCTOR DROPDOWN
+# SIDEBAR — DOCTOR SELECTION
 # ---------------------------------------------------
 with st.sidebar:
     st.header("👨‍⚕️ Doctor Panel")
+
     doctors = [
         "Dr. A. Mehta", "Dr. S. Rao", "Dr. K. Sharma", "Dr. R. Iyer",
-        "Dr. P. Kulkarni", "Dr. N. Verma", "Dr. M. Das", "Dr. T. Sen"
+        "Dr. P. Kulkarni", "Dr. N. Verma", "Dr. M. Das",
+        "Dr. T. Sen", "Dr. H. Kapoor", "Dr. J. Malhotra"
     ]
-    selected_doctor = st.selectbox("Doctor on duty", doctors)
 
-    if st.button("Logout"):
-        logout()
+    selected_doctor = st.selectbox("Doctor on Duty", doctors)
+    st.markdown(f"**Currently Viewing:** {selected_doctor}")
 
 # ---------------------------------------------------
 # DATA GENERATION
@@ -137,20 +110,18 @@ df["AI_Risk"] = risk
 df = df.sort_values("AI_Risk", ascending=False).reset_index(drop=True)
 
 df["Status"] = [
-    "Critical" if i < 5 else
-    "Moderate" if r > 0.45 else
-    "Stable"
+    "Critical" if i < 5 else "Moderate" if r > 0.45 else "Stable"
     for i, r in enumerate(df["AI_Risk"])
 ]
 
 st.session_state.patients = df
 
 # ---------------------------------------------------
-# STYLES — BUTTON COLORS FIXED
+# UI STYLES (Doctor-friendly)
 # ---------------------------------------------------
 st.markdown("""
 <style>
-.stApp { background-color:#e8f5e9; color:black; }
+.stApp { background-color: #e8f5e9; color: black; }
 
 .card-wrapper { transition: transform 0.6s ease-in-out; }
 
@@ -167,39 +138,25 @@ st.markdown("""
 .moderate { border-left: 6px solid #2563eb; }
 .stable { border-left: 6px solid #16a34a; }
 
-/* BUTTON STYLING */
-button[kind="primary"] {
-    background-color: #065f46 !important;
+button {
+    background-color: #2563eb !important;
     color: white !important;
-    border-radius: 8px;
-    font-weight: 600;
-}
-
-button[kind="secondary"] {
-    background-color: #1e40af !important;
-    color: white !important;
-    border-radius: 8px;
-    font-weight: 600;
-}
-
-button:hover {
-    opacity: 0.9;
+    border-radius: 6px !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------
-# MAIN DASHBOARD
+# DASHBOARD
 # ---------------------------------------------------
 left, right = st.columns([3, 1])
 
 with left:
-    st.subheader("🚨 Live Patient Board 🚨")
+    st.subheader("🚨 Live Patient Board")
     cols = st.columns(3)
 
     for idx, p in df.iterrows():
         pid = p["patient_id"]
-
         prev = st.session_state.last_positions.get(pid, idx)
         delta = prev - idx
 
@@ -211,22 +168,19 @@ with left:
         st.session_state.last_positions[pid] = idx
 
         with cols[idx % 3]:
-            st.markdown(
-                f"""
-                <div class="card-wrapper" style="transform: translateY({move}px);">
-                    <div class="card {p['Status'].lower()}">
-                        <b>{pid}</b><br>
-                        RR: {p['rr']} | BP: {p['bp']}<br>
-                        HR: {p['hr']} | Temp: {p['temp']}<br>
-                        qSOFA: {p['qSOFA']}<br>
-                        Risk: {p['AI_Risk']*100:.1f}%
-                    </div>
+            st.markdown(f"""
+            <div class="card-wrapper" style="transform: translateY({move}px);">
+                <div class="card {p['Status'].lower()}">
+                    <b>{pid}</b><br>
+                    RR: {p['rr']} | BP: {p['bp']}<br>
+                    HR: {p['hr']} | Temp: {p['temp']}<br>
+                    qSOFA: {p['qSOFA']}<br>
+                    Risk: {p['AI_Risk']*100:.1f}%
                 </div>
-                """,
-                unsafe_allow_html=True
-            )
+            </div>
+            """, unsafe_allow_html=True)
 
-            if st.button("View Details", key=pid, type="primary"):
+            if st.button("View Details", key=pid):
                 st.session_state.selected_patient = pid
 
 # ---------------------------------------------------
@@ -243,28 +197,25 @@ with right:
         st.markdown(f"**Patient:** {pid}")
         st.markdown(f"**Doctor:** {selected_doctor}")
         st.markdown(f"**Status:** {p['Status']}")
-        st.markdown(f"**Risk:** {p['AI_Risk']*100:.1f}%")
+        st.markdown(f"**Risk Level:** {p['AI_Risk']*100:.1f}%")
 
         if p["AI_Risk"] > 0.75:
-            st.markdown("<b style='color:black;'>Patient condition very serious</b>", unsafe_allow_html=True)
+            st.error("Patient condition may worsen very soon")
         elif p["AI_Risk"] > 0.6:
-            st.markdown("<b style='color:black;'>Patient needs immediate attention</b>", unsafe_allow_html=True)
+            st.warning("Patient needs attention")
         elif p["AI_Risk"] > 0.45:
-            st.markdown("<b style='color:black;'>Patient needs close monitoring</b>", unsafe_allow_html=True)
+            st.info("Monitor patient closely")
         else:
-            st.markdown("<b style='color:black;'>Patient is stable</b>", unsafe_allow_html=True)
+            st.success("Patient is stable")
 
         fig, ax = plt.subplots(figsize=(7, 4))
         ax.plot(hist["rr"], label="Respiration Rate", linewidth=2)
         ax.plot(hist["bp"], label="Blood Pressure", linewidth=2)
         ax.plot(hist["risk"], label="AI Risk", linewidth=2)
-
-        ax.set_title("Vitals & AI Risk Trend")
-        ax.grid(True, linestyle="--", alpha=0.4)
         ax.legend()
+        ax.grid(True, linestyle="--", alpha=0.4)
 
         st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
 
-        if st.button("Clear Selection", type="secondary"):
+        if st.button("Clear Selection"):
             st.session_state.selected_patient = None
