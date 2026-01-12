@@ -148,13 +148,3 @@ Alerts: Horizontal bars highlight patients needing immediate attention.
 
 Doctor Panel: Shows on-duty doctor and logout option.
 
-
-Below attached are images of website.
-
-<img width="1810" height="850" alt="image" src="https://github.com/user-attachments/assets/c41cff36-d6bd-4956-8094-e3ae37f7cf91" />
-
-<img width="1368" height="870" alt="image" src="https://github.com/user-attachments/assets/7e1ada65-c8a3-4779-aef9-d73ec6235c25" />
-<img width="291" height="558" alt="image" src="https://github.com/user-attachments/assets/3760b059-6390-462c-be5a-765568bed14c" />
-
-
-
