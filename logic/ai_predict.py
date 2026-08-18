@@ -1,49 +1,111 @@
-import numpy as np
+import os
+import joblib
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier
 
-# ------------------ DATA GENERATION ------------------
-def generate_training_data(n=10000):
-    np.random.seed(42)
 
-    data = {
-        "resp": np.random.normal(22, 4, n),
-        "bp": np.random.normal(105, 15, n),
-        "hr": np.random.normal(95, 18, n),
-        "temp": np.random.normal(37.2, 0.7, n),
-        "age": np.random.randint(18, 90, n),
-        "qsofa": np.random.randint(0, 4, n),
-    }
+# ============================================================
+# MODEL PATH
+# ============================================================
 
-    df = pd.DataFrame(data)
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "ml",
+    "saved_models",
+    "sepsis_model.pkl"
+)
 
-    # Trend-based risk label (NOT diagnosis)
-    df["risk"] = (
-        (df["resp"] > 24).astype(int) +
-        (df["bp"] < 95).astype(int) +
-        (df["hr"] > 110).astype(int) +
-        (df["temp"] > 38).astype(int) +
-        (df["qsofa"] >= 2).astype(int)
-    ) >= 2
+MODEL_PATH = os.path.abspath(MODEL_PATH)
 
-    return df
 
-# ------------------ TRAIN MODEL ------------------
-df = generate_training_data()
-X = df[["resp", "bp", "hr", "temp", "age", "qsofa"]]
-y = df["risk"]
+# ============================================================
+# LOAD MODEL
+# ============================================================
 
-model = GradientBoostingClassifier()
-model.fit(X, y)
+model = joblib.load(MODEL_PATH)
 
-# ------------------ PREDICTION ------------------
-def predict_escalation(resp, bp, hr, temp, age, qsofa):
-    X_new = pd.DataFrame([{
-        "resp": resp,
-        "bp": bp,
-        "hr": hr,
-        "temp": temp,
-        "age": age,
-        "qsofa": qsofa
-    }])
-    return model.predict_proba(X_new)[0][1]
+
+# ============================================================
+# FEATURE NAMES
+# Must exactly match train.py
+# ============================================================
+
+FEATURE_NAMES = [
+    "resp",
+    "bp",
+    "hr",
+    "temp",
+    "age",
+    "qsofa"
+]
+
+
+# ============================================================
+# PREDICTION
+# ============================================================
+
+def predict_escalation(features):
+    """
+    Predict patient escalation risk.
+
+    Expected features:
+        resp
+        bp
+        hr
+        temp
+        age
+        qsofa
+    """
+
+    # --------------------------------------------------------
+    # If a dictionary is provided
+    # --------------------------------------------------------
+
+    if isinstance(features, dict):
+
+        data = {
+            "resp": features["resp"],
+            "bp": features["bp"],
+            "hr": features["hr"],
+            "temp": features["temp"],
+            "age": features["age"],
+            "qsofa": features["qsofa"]
+        }
+
+    # --------------------------------------------------------
+    # If a list/array is provided
+    # --------------------------------------------------------
+
+    else:
+
+        if len(features) != 6:
+            raise ValueError(
+                "Expected exactly 6 features: "
+                "resp, bp, hr, temp, age, qsofa"
+            )
+
+        data = dict(
+            zip(FEATURE_NAMES, features)
+        )
+
+
+    # --------------------------------------------------------
+    # Create DataFrame with EXACT feature order
+    # --------------------------------------------------------
+
+    X_new = pd.DataFrame(
+        [data],
+        columns=FEATURE_NAMES
+    )
+
+
+    # --------------------------------------------------------
+    # Predict probability
+    # --------------------------------------------------------
+
+    probability = model.predict_proba(
+        X_new
+    )[0][1]
+
+
+    return float(probability)

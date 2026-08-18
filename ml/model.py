@@ -1,16 +1,49 @@
-from sklearn.linear_model import LogisticRegression
+import os
+import joblib
 
-# Demo training data (simulated)
-X_train = [
-    [20, 110, 15, 18, 115, 1],
-    [28, 90, 13, 26, 95, 2],
-    [32, 80, 12, 30, 85, 3],
-]
-y_train = [0, 1, 1]  # 0 = stable, 1 = escalating
 
-model = LogisticRegression()
-model.fit(X_train, y_train)
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "saved_models",
+    "sepsis_model.pkl"
+)
+
+
+def load_model():
+    """
+    Load the trained ML model.
+    """
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            "Trained model not found. "
+            "Run ml/train.py first."
+        )
+
+    return joblib.load(MODEL_PATH)
+
 
 def predict_risk(features):
+    """
+    Return ML risk probability.
+    """
+
+    model = load_model()
+
     probability = model.predict_proba([features])[0][1]
-    return round(probability, 2)
+
+    return round(float(probability), 2)
+
+
+def predict_class(features):
+    """
+    Return predicted class.
+    0 = Lower risk
+    1 = Higher risk
+    """
+
+    model = load_model()
+
+    prediction = model.predict([features])[0]
+
+    return int(prediction)
