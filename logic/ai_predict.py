@@ -1,111 +1,167 @@
+"""
+AI prediction logic for Vitalyn Alertia.
+
+No qSOFA.
+No mental-status feature.
+"""
+
 import os
 import joblib
+import numpy as np
 import pandas as pd
 
+from ml.features import FEATURE_NAMES
 
-# ============================================================
-# MODEL PATH
-# ============================================================
 
 MODEL_PATH = os.path.join(
-    os.path.dirname(__file__),
-    "..",
     "ml",
     "saved_models",
     "sepsis_model.pkl"
 )
 
-MODEL_PATH = os.path.abspath(MODEL_PATH)
+
+# ============================================================
+# LOAD MODEL ONCE
+# ============================================================
+
+_MODEL = None
+
+
+def load_model():
+
+    global _MODEL
+
+    if _MODEL is None:
+
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(
+                f"Model not found at {MODEL_PATH}. "
+                f"Run python ml/train.py first."
+            )
+
+        _MODEL = joblib.load(
+            MODEL_PATH
+        )
+
+    return _MODEL
 
 
 # ============================================================
-# LOAD MODEL
+# VALIDATE FEATURES
 # ============================================================
 
-model = joblib.load(MODEL_PATH)
-
-
-# ============================================================
-# FEATURE NAMES
-# Must exactly match train.py
-# ============================================================
-
-FEATURE_NAMES = [
-    "resp",
-    "bp",
-    "hr",
-    "temp",
-    "age",
-    "qsofa"
-]
-
-
-# ============================================================
-# PREDICTION
-# ============================================================
-
-def predict_escalation(features):
-    """
-    Predict patient escalation risk.
-
-    Expected features:
-        resp
-        bp
-        hr
-        temp
-        age
-        qsofa
-    """
-
-    # --------------------------------------------------------
-    # If a dictionary is provided
-    # --------------------------------------------------------
+def validate_features(features):
 
     if isinstance(features, dict):
 
-        data = {
-            "resp": features["resp"],
-            "bp": features["bp"],
-            "hr": features["hr"],
-            "temp": features["temp"],
-            "age": features["age"],
-            "qsofa": features["qsofa"]
-        }
+        missing = [
+            name
+            for name in FEATURE_NAMES
+            if name not in features
+        ]
 
-    # --------------------------------------------------------
-    # If a list/array is provided
-    # --------------------------------------------------------
+        if missing:
+            raise ValueError(
+                "Missing required features: "
+                + ", ".join(missing)
+            )
+
+        values = [
+            features[name]
+            for name in FEATURE_NAMES
+        ]
+
+    elif isinstance(
+        features,
+        (list, tuple, np.ndarray)
+    ):
+
+        if len(features) != len(FEATURE_NAMES):
+
+            raise ValueError(
+                f"Expected {len(FEATURE_NAMES)} "
+                f"features, received {len(features)}."
+            )
+
+        values = list(features)
 
     else:
 
-        if len(features) != 6:
-            raise ValueError(
-                "Expected exactly 6 features: "
-                "resp, bp, hr, temp, age, qsofa"
-            )
-
-        data = dict(
-            zip(FEATURE_NAMES, features)
+        raise TypeError(
+            "Features must be a dictionary, "
+            "list, tuple or numpy array."
         )
 
+    numeric_values = []
 
-    # --------------------------------------------------------
-    # Create DataFrame with EXACT feature order
-    # --------------------------------------------------------
+    for name, value in zip(
+        FEATURE_NAMES,
+        values
+    ):
 
-    X_new = pd.DataFrame(
-        [data],
+        try:
+            value = float(value)
+
+        except (TypeError, ValueError):
+
+            raise ValueError(
+                f"Feature '{name}' must be numeric."
+            )
+
+        if not np.isfinite(value):
+
+            raise ValueError(
+                f"Feature '{name}' contains "
+                f"an invalid value."
+            )
+
+        numeric_values.append(value)
+
+    return pd.DataFrame(
+        [numeric_values],
         columns=FEATURE_NAMES
     )
 
 
-    # --------------------------------------------------------
-    # Predict probability
-    # --------------------------------------------------------
+# ============================================================
+# PREDICT RISK
+# ============================================================
+
+def predict_escalation(features):
+
+    model = load_model()
+
+    X = validate_features(
+        features
+    )
 
     probability = model.predict_proba(
-        X_new
+        X
     )[0][1]
 
+    return float(
+        np.clip(
+            probability,
+            0.0,
+            1.0
+        )
+    )
 
-    return float(probability)
+
+# ============================================================
+# PREDICT CLASS
+# ============================================================
+
+def predict_class(features):
+
+    model = load_model()
+
+    X = validate_features(
+        features
+    )
+
+    prediction = model.predict(
+        X
+    )[0]
+
+    return int(prediction)

@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .streamlit/
 .env
+# PhysioNet clinical dataset
+data/raw/
+data/processed/
+
+# Local dataset/download helpers
+download_physionet.py
+training.html

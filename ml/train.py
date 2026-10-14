@@ -1,4 +1,15 @@
+"""
+Train Vitalyn Alertia using the PhysioNet 2019 Sepsis Dataset.
+
+- Uses real ICU patient data
+- Uses SepsisLabel as target
+- No qSOFA
+- No mental status
+- Patient-level train/test split
+"""
+
 import os
+import glob
 import joblib
 import numpy as np
 import pandas as pd
@@ -6,254 +17,211 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import (
-    RandomForestClassifier,
-    GradientBoostingClassifier
-)
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
-    roc_auc_score
+    roc_auc_score,
+    average_precision_score
 )
+
+from ml.features import extract_features, FEATURE_NAMES
 
 
 # ============================================================
-# CONFIGURATION
+# CONFIG
 # ============================================================
 
 RANDOM_STATE = 42
 
-FEATURE_NAMES = [
-    "resp",
-    "bp",
-    "hr",
-    "temp",
-    "age",
-    "qsofa"
-]
+DATA_DIR = os.path.join(
+    "data",
+    "raw",
+    "training_setA"
+)
+
+MODEL_DIR = os.path.join(
+    "ml",
+    "saved_models"
+)
+
+MODEL_PATH = os.path.join(
+    MODEL_DIR,
+    "sepsis_model.pkl"
+)
+
+COMPARISON_PATH = os.path.join(
+    "ml",
+    "model_comparison.csv"
+)
 
 
 # ============================================================
-# SYNTHETIC DATA GENERATION
+# GET PATIENT FILES
 # ============================================================
 
-def generate_training_data(n=10000):
+def get_patient_files():
 
-    np.random.seed(RANDOM_STATE)
-
-    data = {
-        "resp": np.random.normal(21, 4.5, n),
-        "bp": np.random.normal(110, 16, n),
-        "hr": np.random.normal(92, 18, n),
-        "temp": np.random.normal(37.1, 0.65, n),
-        "age": np.random.randint(18, 90, n),
-        "qsofa": np.random.randint(0, 4, n)
-    }
-
-    df = pd.DataFrame(data)
-
-    # ========================================================
-    # REALISTIC VALUE RANGES
-    # ========================================================
-
-    df["resp"] = df["resp"].clip(8, 45)
-
-    df["bp"] = df["bp"].clip(60, 180)
-
-    df["hr"] = df["hr"].clip(40, 180)
-
-    df["temp"] = df["temp"].clip(35, 41)
-
-
-    # ========================================================
-    # SYNTHETIC LATENT RISK
-    # ========================================================
-    #
-    # This is NOT a clinical diagnosis.
-    #
-    # These labels are temporary and are only being used to
-    # test the ML pipeline until a real dataset is integrated.
-    # ========================================================
-
-    score = (
-
-        0.45 * (
-            (df["resp"] - 20) / 5
+    if not os.path.exists(DATA_DIR):
+        raise FileNotFoundError(
+            f"Dataset directory not found: {DATA_DIR}"
         )
 
-        - 0.40 * (
-            (df["bp"] - 110) / 20
+    files = sorted(
+        glob.glob(
+            os.path.join(DATA_DIR, "*.psv")
         )
-
-        + 0.25 * (
-            (df["hr"] - 90) / 20
-        )
-
-        + 0.35 * (
-            (df["temp"] - 37) / 0.7
-        )
-
-        + 0.20 * (
-            (df["age"] - 50) / 30
-        )
-
-        + 0.80 * df["qsofa"]
     )
 
+    if not files:
+        raise FileNotFoundError(
+            f"No .psv files found in {DATA_DIR}"
+        )
 
-    # ========================================================
-    # ADD RANDOM VARIATION
-    # ========================================================
+    print(f"Found {len(files):,} patient files.")
 
-    score += np.random.normal(
-        0,
-        0.7,
-        n
+    return files
+
+
+# ============================================================
+# BUILD SAMPLES FOR ONE PATIENT
+# ============================================================
+
+def build_patient_samples(file_path):
+
+    try:
+        df = pd.read_csv(
+            file_path,
+            sep="|"
+        )
+
+    except Exception as error:
+        print(f"Could not read {file_path}: {error}")
+        return [], []
+
+    required_columns = [
+        "Resp",
+        "SBP",
+        "HR",
+        "Temp",
+        "Age",
+        "SepsisLabel"
+    ]
+
+    missing = [
+        column
+        for column in required_columns
+        if column not in df.columns
+    ]
+
+    if missing:
+        print(
+            f"Skipping {file_path}. "
+            f"Missing columns: {missing}"
+        )
+        return [], []
+
+    features = []
+    labels = []
+
+    for i in range(len(df)):
+
+        history = df.iloc[:i + 1].copy()
+
+        try:
+            feature_vector = extract_features(history)
+
+        except ValueError:
+            continue
+
+        label = df.iloc[i]["SepsisLabel"]
+
+        if pd.isna(label):
+            continue
+
+        features.append(feature_vector)
+        labels.append(int(label))
+
+    return features, labels
+
+
+# ============================================================
+# BUILD DATASET
+# ============================================================
+
+def build_dataset(patient_files):
+
+    all_features = []
+    all_labels = []
+
+    total_patients = len(patient_files)
+
+    for index, file_path in enumerate(
+        patient_files,
+        start=1
+    ):
+
+        if index == 1 or index % 100 == 0:
+            print(
+                f"Processing patient "
+                f"{index:,}/{total_patients:,}"
+            )
+
+        features, labels = build_patient_samples(
+            file_path
+        )
+
+        all_features.extend(features)
+        all_labels.extend(labels)
+
+    X = pd.DataFrame(
+        all_features,
+        columns=FEATURE_NAMES
     )
 
-
-    # ========================================================
-    # CONVERT SCORE TO PROBABILITY
-    # ========================================================
-
-    probability = 1 / (
-        1 + np.exp(-score)
+    y = pd.Series(
+        all_labels,
+        name="SepsisLabel"
     )
 
-
-    # ========================================================
-    # CREATE BINARY TARGET
-    #
-    # 0 = Lower risk
-    # 1 = Higher risk
-    # ========================================================
-
-    df["risk"] = (
-        np.random.random(n) < probability
-    ).astype(int)
-
-
-    return df
+    return X, y
 
 
 # ============================================================
 # TRAIN MODELS
 # ============================================================
 
-def train_models():
-
-    print("=" * 60)
-    print("VITALYN ALERTIA - ML TRAINING")
-    print("=" * 60)
-
-
-    # ========================================================
-    # GENERATE DATA
-    # ========================================================
-
-    df = generate_training_data()
-
-
-    print(
-        f"\nDataset size: {len(df)}"
-    )
-
-
-    print(
-        f"Number of features: {len(FEATURE_NAMES)}"
-    )
-
-
-    # ========================================================
-    # CLASS DISTRIBUTION
-    # ========================================================
-
-    print(
-        "\nClass distribution:"
-    )
-
-    print(
-        df["risk"].value_counts()
-    )
-
-
-    # ========================================================
-    # FEATURES AND TARGET
-    # ========================================================
-
-    X = df[FEATURE_NAMES]
-
-    y = df["risk"]
-
-
-    # ========================================================
-    # TRAIN-TEST SPLIT
-    # ========================================================
-
-    X_train, X_test, y_train, y_test = train_test_split(
-
-        X,
-
-        y,
-
-        test_size=0.20,
-
-        random_state=RANDOM_STATE,
-
-        stratify=y
-    )
-
-
-    print(
-        f"\nTraining samples: {len(X_train)}"
-    )
-
-    print(
-        f"Testing samples : {len(X_test)}"
-    )
-
-
-    # ========================================================
-    # DEFINE ML MODELS
-    # ========================================================
+def train_models(X_train, y_train):
 
     models = {
 
-        "Logistic Regression":
-
-        Pipeline([
+        "Logistic Regression": Pipeline([
             (
                 "scaler",
                 StandardScaler()
             ),
-
             (
                 "model",
                 LogisticRegression(
-                    max_iter=1000,
+                    max_iter=2000,
+                    class_weight="balanced",
                     random_state=RANDOM_STATE
                 )
             )
         ]),
 
-
-        "Random Forest":
-
-        RandomForestClassifier(
+        "Random Forest": RandomForestClassifier(
             n_estimators=200,
+            class_weight="balanced",
             random_state=RANDOM_STATE,
-            class_weight="balanced"
+            n_jobs=-1
         ),
 
-
-        "Gradient Boosting":
-
-        GradientBoostingClassifier(
+        "Gradient Boosting": GradientBoostingClassifier(
             n_estimators=150,
             learning_rate=0.05,
             max_depth=3,
@@ -261,267 +229,332 @@ def train_models():
         )
     }
 
-
-    # ========================================================
-    # TRAIN AND EVALUATE
-    # ========================================================
-
-    results = []
-
     trained_models = {}
-
 
     for name, model in models.items():
 
-        print(
-            f"\n{name}"
-        )
+        print("\n" + "=" * 60)
+        print(f"Training {name}")
+        print("=" * 60)
 
-        print(
-            "-" * len(name)
-        )
+        if name == "Gradient Boosting":
 
+            class_counts = (
+                y_train
+                .value_counts()
+                .to_dict()
+            )
 
-        # ----------------------------------------------------
-        # TRAIN
-        # ----------------------------------------------------
+            weight_0 = (
+                len(y_train)
+                /
+                (2 * class_counts.get(0, 1))
+            )
 
-        model.fit(
-            X_train,
-            y_train
-        )
+            weight_1 = (
+                len(y_train)
+                /
+                (2 * class_counts.get(1, 1))
+            )
 
+            sample_weights = y_train.map({
+                0: weight_0,
+                1: weight_1
+            })
 
-        # ----------------------------------------------------
-        # PREDICTIONS
-        # ----------------------------------------------------
+            model.fit(
+                X_train,
+                y_train,
+                sample_weight=sample_weights
+            )
 
-        predictions = model.predict(
-            X_test
-        )
+        else:
 
-        probabilities = model.predict_proba(
-            X_test
-        )[:, 1]
-
-
-        # ----------------------------------------------------
-        # METRICS
-        # ----------------------------------------------------
-
-        accuracy = accuracy_score(
-            y_test,
-            predictions
-        )
-
-        precision = precision_score(
-            y_test,
-            predictions,
-            zero_division=0
-        )
-
-        recall = recall_score(
-            y_test,
-            predictions,
-            zero_division=0
-        )
-
-        f1 = f1_score(
-            y_test,
-            predictions,
-            zero_division=0
-        )
-
-        roc_auc = roc_auc_score(
-            y_test,
-            probabilities
-        )
-
-
-        # ----------------------------------------------------
-        # PRINT RESULTS
-        # ----------------------------------------------------
-
-        print(
-            f"Accuracy : {accuracy:.4f}"
-        )
-
-        print(
-            f"Precision: {precision:.4f}"
-        )
-
-        print(
-            f"Recall   : {recall:.4f}"
-        )
-
-        print(
-            f"F1 Score : {f1:.4f}"
-        )
-
-        print(
-            f"ROC-AUC  : {roc_auc:.4f}"
-        )
-
-
-        # ----------------------------------------------------
-        # SAVE RESULTS
-        # ----------------------------------------------------
-
-        results.append({
-
-            "Model": name,
-
-            "Accuracy": accuracy,
-
-            "Precision": precision,
-
-            "Recall": recall,
-
-            "F1": f1,
-
-            "ROC-AUC": roc_auc
-        })
-
+            model.fit(
+                X_train,
+                y_train
+            )
 
         trained_models[name] = model
 
+    return trained_models
 
-    # ========================================================
-    # MODEL COMPARISON
-    # ========================================================
 
-    results_df = pd.DataFrame(
-        results
+# ============================================================
+# EVALUATE MODEL
+# ============================================================
+
+def evaluate_model(
+    name,
+    model,
+    X_test,
+    y_test
+):
+
+    predictions = model.predict(X_test)
+
+    probabilities = model.predict_proba(
+        X_test
+    )[:, 1]
+
+    accuracy = accuracy_score(
+        y_test,
+        predictions
     )
 
-
-    print(
-        "\n" + "=" * 60
+    precision = precision_score(
+        y_test,
+        predictions,
+        zero_division=0
     )
 
-    print(
-        "MODEL COMPARISON"
+    recall = recall_score(
+        y_test,
+        predictions,
+        zero_division=0
     )
 
-    print(
-        "=" * 60
+    f1 = f1_score(
+        y_test,
+        predictions,
+        zero_division=0
     )
 
-
-    print(
-        results_df.to_string(
-            index=False
-        )
+    roc_auc = roc_auc_score(
+        y_test,
+        probabilities
     )
 
-
-    # ========================================================
-    # SELECT BEST MODEL
-    # ========================================================
-    #
-    # F1 is used for model selection because this is a
-    # risk-screening problem where both precision and recall
-    # are important.
-    # ========================================================
-
-    best_model_name = (
-
-        results_df
-        .sort_values(
-            "F1",
-            ascending=False
-        )
-        .iloc[0]["Model"]
+    pr_auc = average_precision_score(
+        y_test,
+        probabilities
     )
 
+    print(f"\nModel: {name}")
+    print(f"Accuracy : {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall   : {recall:.4f}")
+    print(f"F1 Score : {f1:.4f}")
+    print(f"ROC-AUC  : {roc_auc:.4f}")
+    print(f"PR-AUC   : {pr_auc:.4f}")
 
-    best_model = trained_models[
-        best_model_name
-    ]
-
-
-    print(
-        "\n" + "=" * 60
-    )
-
-    print(
-        f"BEST MODEL: {best_model_name}"
-    )
-
-    print(
-        "=" * 60
-    )
-
-
-    # ========================================================
-    # SAVE BEST MODEL
-    # ========================================================
-
-    model_directory = os.path.join(
-        os.path.dirname(__file__),
-        "saved_models"
-    )
-
-
-    os.makedirs(
-        model_directory,
-        exist_ok=True
-    )
-
-
-    model_path = os.path.join(
-        model_directory,
-        "sepsis_model.pkl"
-    )
-
-
-    joblib.dump(
-        best_model,
-        model_path
-    )
-
-
-    print(
-        "\nModel saved to:"
-    )
-
-    print(
-        model_path
-    )
-
-
-    # ========================================================
-    # SAVE MODEL COMPARISON
-    # ========================================================
-
-    results_path = os.path.join(
-        os.path.dirname(__file__),
-        "model_comparison.csv"
-    )
-
-
-    results_df.to_csv(
-        results_path,
-        index=False
-    )
-
-
-    print(
-        "\nModel comparison saved to:"
-    )
-
-    print(
-        results_path
-    )
-
-
-    return results_df
+    return {
+        "Model": name,
+        "Accuracy": accuracy,
+        "Precision": precision,
+        "Recall": recall,
+        "F1": f1,
+        "ROC_AUC": roc_auc,
+        "PR_AUC": pr_auc
+    }
 
 
 # ============================================================
 # MAIN
 # ============================================================
 
-if __name__ == "__main__":
+def main():
 
-    train_models()
+    print("\n" + "=" * 70)
+    print("VITALYN ALERTIA - REAL DATA TRAINING")
+    print("=" * 70)
+
+    # Get all patient files
+    patient_files = get_patient_files()
+
+    # IMPORTANT:
+    # Split patients BEFORE generating hourly samples.
+    # This prevents the same patient appearing in both
+    # training and testing sets.
+    train_files, test_files = train_test_split(
+        patient_files,
+        test_size=0.20,
+        random_state=RANDOM_STATE
+    )
+
+    print(
+        f"\nTraining patients: {len(train_files):,}"
+    )
+
+    print(
+        f"Testing patients : {len(test_files):,}"
+    )
+
+    # --------------------------------------------------------
+    # BUILD TRAINING DATA
+    # --------------------------------------------------------
+
+    print("\n" + "=" * 70)
+    print("BUILDING TRAINING DATA")
+    print("=" * 70)
+
+    X_train, y_train = build_dataset(
+        train_files
+    )
+
+    print(
+        f"\nTraining samples: {len(X_train):,}"
+    )
+
+    print(
+        f"Training features: {len(FEATURE_NAMES)}"
+    )
+
+    print("\nTraining class distribution:")
+
+    print(
+        y_train.value_counts()
+    )
+
+    # --------------------------------------------------------
+    # BUILD TEST DATA
+    # --------------------------------------------------------
+
+    print("\n" + "=" * 70)
+    print("BUILDING TEST DATA")
+    print("=" * 70)
+
+    X_test, y_test = build_dataset(
+        test_files
+    )
+
+    print(
+        f"\nTesting samples: {len(X_test):,}"
+    )
+
+    print("\nTesting class distribution:")
+
+    print(
+        y_test.value_counts()
+    )
+
+    # --------------------------------------------------------
+    # VALIDATION
+    # --------------------------------------------------------
+
+    if X_train.empty:
+        raise ValueError(
+            "Training dataset is empty."
+        )
+
+    if X_test.empty:
+        raise ValueError(
+            "Testing dataset is empty."
+        )
+
+    if y_train.nunique() < 2:
+        raise ValueError(
+            "Training dataset contains only one class."
+        )
+
+    if y_test.nunique() < 2:
+        raise ValueError(
+            "Testing dataset contains only one class."
+        )
+
+    # --------------------------------------------------------
+    # TRAIN
+    # --------------------------------------------------------
+
+    trained_models = train_models(
+        X_train,
+        y_train
+    )
+
+    # --------------------------------------------------------
+    # EVALUATE
+    # --------------------------------------------------------
+
+    results = []
+
+    for name, model in trained_models.items():
+
+        result = evaluate_model(
+            name,
+            model,
+            X_test,
+            y_test
+        )
+
+        results.append(result)
+
+    results_df = pd.DataFrame(
+        results
+    )
+
+    # --------------------------------------------------------
+    # SELECT BEST MODEL
+    # --------------------------------------------------------
+
+    results_df = results_df.sort_values(
+        "F1",
+        ascending=False
+    ).reset_index(
+        drop=True
+    )
+
+    best_model_name = (
+        results_df.iloc[0]["Model"]
+    )
+
+    best_model = trained_models[
+        best_model_name
+    ]
+
+    print("\n" + "=" * 70)
+    print(f"BEST MODEL: {best_model_name}")
+    print("=" * 70)
+
+    # --------------------------------------------------------
+    # SAVE MODEL
+    # --------------------------------------------------------
+
+    os.makedirs(
+        MODEL_DIR,
+        exist_ok=True
+    )
+
+    joblib.dump(
+        best_model,
+        MODEL_PATH
+    )
+
+    print(
+        f"\nModel saved to: {MODEL_PATH}"
+    )
+
+    # --------------------------------------------------------
+    # SAVE MODEL COMPARISON
+    # --------------------------------------------------------
+
+    results_df.to_csv(
+        COMPARISON_PATH,
+        index=False
+    )
+
+    print(
+        f"Model comparison saved to: "
+        f"{COMPARISON_PATH}"
+    )
+
+    # --------------------------------------------------------
+    # FEATURES
+    # --------------------------------------------------------
+
+    print("\nFEATURES USED:")
+
+    for index, feature in enumerate(
+        FEATURE_NAMES,
+        start=1
+    ):
+        print(
+            f"{index}. {feature}"
+        )
+
+    print("\n" + "=" * 70)
+    print("TRAINING COMPLETE")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()

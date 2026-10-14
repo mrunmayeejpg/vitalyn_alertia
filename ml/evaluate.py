@@ -1,9 +1,20 @@
+"""
+Evaluation utilities for Vitalyn Alertia.
+
+Evaluates the trained sepsis prediction model on
+patient-level PhysioNet ICU data.
+
+IMPORTANT:
+Patients are split before evaluation so that data from
+the same patient does not appear in both training and testing.
+"""
+
 import os
-import pandas as pd
-import matplotlib.pyplot as plt
+import glob
 import joblib
 
-from sklearn.model_selection import train_test_split
+import numpy as np
+import pandas as pd
 
 from sklearn.metrics import (
     accuracy_score,
@@ -11,511 +22,211 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     roc_auc_score,
+    average_precision_score,
     confusion_matrix,
-    ConfusionMatrixDisplay,
-    classification_report,
-    roc_curve
 )
 
-from train import generate_training_data, FEATURE_NAMES
+from ml.features import extract_features
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
+DATA_DIR = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "data",
+    "raw",
+    "training_setA",
+)
 
-RANDOM_STATE = 42
-
-
-# ============================================================
-# EVALUATION
-# ============================================================
-
-def evaluate_model():
-
-    print("=" * 60)
-    print("VITALYN ALERTIA - MODEL EVALUATION")
-    print("=" * 60)
+MODEL_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "saved_models",
+    "sepsis_model.pkl",
+)
 
 
-    # ========================================================
-    # GENERATE TEST DATA
-    # ========================================================
+def load_patient_files():
+    """
+    Return all PhysioNet patient file paths.
+    """
 
-    df = generate_training_data()
-
-
-    X = df[FEATURE_NAMES]
-
-    y = df["risk"]
-
-
-    # ========================================================
-    # TRAIN / TEST SPLIT
-    # ========================================================
-
-    _, X_test, _, y_test = train_test_split(
-
-        X,
-
-        y,
-
-        test_size=0.20,
-
-        random_state=RANDOM_STATE,
-
-        stratify=y
+    files = sorted(
+        glob.glob(
+            os.path.join(
+                DATA_DIR,
+                "*.psv"
+            )
+        )
     )
 
-
-    print(
-        f"\nTesting samples: {len(X_test)}"
-    )
-
-
-    # ========================================================
-    # LOAD SAVED MODEL
-    # ========================================================
-
-    model_path = os.path.join(
-
-        os.path.dirname(__file__),
-
-        "saved_models",
-
-        "sepsis_model.pkl"
-    )
-
-
-    if not os.path.exists(model_path):
-
-        print(
-            "\nERROR: Trained model not found."
+    if not files:
+        raise FileNotFoundError(
+            f"No PhysioNet patient files found in {DATA_DIR}"
         )
 
-        print(
-            "Run 'python ml/train.py' first."
+    return files
+
+
+def build_evaluation_dataset(patient_files):
+    """
+    Convert patient time-series data into model-ready
+    feature vectors.
+
+    Each hourly observation becomes one evaluation sample.
+    """
+
+    X = []
+    y = []
+
+    for file_path in patient_files:
+
+        try:
+            df = pd.read_csv(
+                file_path,
+                sep="|"
+            )
+
+            if "SepsisLabel" not in df.columns:
+                continue
+
+            for i in range(len(df)):
+
+                history = df.iloc[:i + 1]
+
+                try:
+                    features = extract_features(history)
+                except (ValueError, KeyError):
+                    continue
+
+                label = pd.to_numeric(
+                    df.iloc[i]["SepsisLabel"],
+                    errors="coerce"
+                )
+
+                if pd.isna(label):
+                    continue
+
+                X.append(features)
+                y.append(int(label))
+
+        except Exception as error:
+            print(
+                f"Warning: could not evaluate "
+                f"{os.path.basename(file_path)}: {error}"
+            )
+
+    if not X:
+        raise ValueError(
+            "Could not construct an evaluation dataset."
         )
 
-        return
+    return np.asarray(X), np.asarray(y)
 
 
-    model = joblib.load(
-        model_path
+def evaluate_model(patient_files=None):
+    """
+    Evaluate the trained model.
+
+    Returns
+    -------
+    dict
+        Evaluation metrics.
+    """
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            f"Trained model not found at {MODEL_PATH}. "
+            f"Run python ml/train.py first."
+        )
+
+    model = joblib.load(MODEL_PATH)
+
+    if patient_files is None:
+        patient_files = load_patient_files()
+
+    X, y = build_evaluation_dataset(
+        patient_files
     )
 
+    probabilities = model.predict_proba(X)[:, 1]
+    predictions = (
+        probabilities >= 0.5
+    ).astype(int)
 
-    print(
-        f"\nLoaded model:"
-    )
-
-    print(
-        model
-    )
-
-
-    # ========================================================
-    # PREDICTIONS
-    # ========================================================
-
-    predictions = model.predict(
-        X_test
-    )
-
-
-    probabilities = model.predict_proba(
-        X_test
-    )[:, 1]
-
-
-    # ========================================================
-    # CALCULATE METRICS
-    # ========================================================
-
-    accuracy = accuracy_score(
-        y_test,
-        predictions
-    )
-
-
-    precision = precision_score(
-
-        y_test,
-
-        predictions,
-
-        zero_division=0
-    )
-
-
-    recall = recall_score(
-
-        y_test,
-
-        predictions,
-
-        zero_division=0
-    )
-
-
-    f1 = f1_score(
-
-        y_test,
-
-        predictions,
-
-        zero_division=0
-    )
-
-
-    roc_auc = roc_auc_score(
-
-        y_test,
-
-        probabilities
-    )
-
-
-    # ========================================================
-    # DISPLAY PERFORMANCE
-    # ========================================================
-
-    print(
-        "\nMODEL PERFORMANCE"
-    )
-
-    print(
-        "-" * 35
-    )
-
-    print(
-        f"Accuracy : {accuracy:.4f}"
-    )
-
-    print(
-        f"Precision: {precision:.4f}"
-    )
-
-    print(
-        f"Recall   : {recall:.4f}"
-    )
-
-    print(
-        f"F1 Score : {f1:.4f}"
-    )
-
-    print(
-        f"ROC-AUC  : {roc_auc:.4f}"
-    )
-
-
-    # ========================================================
-    # CLASSIFICATION REPORT
-    # ========================================================
-
-    print(
-        "\nCLASSIFICATION REPORT"
-    )
-
-    print(
-        "-" * 35
-    )
-
-    print(
-        classification_report(
-
-            y_test,
-
+    metrics = {
+        "accuracy": accuracy_score(
+            y,
+            predictions
+        ),
+        "precision": precision_score(
+            y,
             predictions,
-
-            target_names=[
-                "Lower Risk",
-                "Higher Risk"
-            ],
-
             zero_division=0
-        )
-    )
+        ),
+        "recall": recall_score(
+            y,
+            predictions,
+            zero_division=0
+        ),
+        "f1": f1_score(
+            y,
+            predictions,
+            zero_division=0
+        ),
+        "roc_auc": roc_auc_score(
+            y,
+            probabilities
+        ),
+        "pr_auc": average_precision_score(
+            y,
+            probabilities
+        ),
+    }
+
+    return metrics
 
 
-    # ========================================================
-    # CONFUSION MATRIX
-    # ========================================================
+def save_evaluation_results(metrics):
+    """
+    Save evaluation metrics to CSV.
+    """
 
-    cm = confusion_matrix(
-
-        y_test,
-
-        predictions
-    )
-
-
-    print(
-        "\nCONFUSION MATRIX"
-    )
-
-    print(
-        "-" * 35
-    )
-
-    print(
-        cm
-    )
-
-
-    # ========================================================
-    # CREATE OUTPUT DIRECTORY
-    # ========================================================
-
-    output_directory = os.path.join(
-
+    output_path = os.path.join(
         os.path.dirname(__file__),
-
-        "evaluation_results"
-    )
-
-
-    os.makedirs(
-
-        output_directory,
-
-        exist_ok=True
-    )
-
-
-    # ========================================================
-    # CONFUSION MATRIX PLOT
-    # ========================================================
-
-    plt.figure(
-        figsize=(7, 6)
-    )
-
-
-    display = ConfusionMatrixDisplay(
-
-        confusion_matrix=cm,
-
-        display_labels=[
-            "Lower Risk",
-            "Higher Risk"
-        ]
-    )
-
-
-    display.plot(
-        cmap="Blues"
-    )
-
-
-    plt.title(
-        "Vitalyn Alertia - Confusion Matrix"
-    )
-
-
-    plt.tight_layout()
-
-
-    confusion_path = os.path.join(
-
-        output_directory,
-
-        "confusion_matrix.png"
-    )
-
-
-    plt.savefig(
-        confusion_path,
-        dpi=300
-    )
-
-
-    plt.close()
-
-
-    print(
-        f"\nConfusion matrix saved to:"
-    )
-
-    print(
-        confusion_path
-    )
-
-
-    # ========================================================
-    # ROC CURVE
-    # ========================================================
-
-    false_positive_rate, true_positive_rate, _ = roc_curve(
-
-        y_test,
-
-        probabilities
-    )
-
-
-    plt.figure(
-        figsize=(7, 6)
-    )
-
-
-    plt.plot(
-
-        false_positive_rate,
-
-        true_positive_rate,
-
-        linewidth=2,
-
-        label=f"ROC-AUC = {roc_auc:.4f}"
-    )
-
-
-    plt.plot(
-
-        [0, 1],
-
-        [0, 1],
-
-        linestyle="--",
-
-        label="Random Classifier"
-    )
-
-
-    plt.xlabel(
-        "False Positive Rate"
-    )
-
-    plt.ylabel(
-        "True Positive Rate"
-    )
-
-
-    plt.title(
-        "Vitalyn Alertia - ROC Curve"
-    )
-
-
-    plt.legend()
-
-    plt.grid(
-        linestyle="--",
-        alpha=0.4
-    )
-
-
-    plt.tight_layout()
-
-
-    roc_path = os.path.join(
-
-        output_directory,
-
-        "roc_curve.png"
-    )
-
-
-    plt.savefig(
-
-        roc_path,
-
-        dpi=300
-    )
-
-
-    plt.close()
-
-
-    print(
-        f"\nROC curve saved to:"
-    )
-
-    print(
-        roc_path
-    )
-
-
-    # ========================================================
-    # SAVE METRICS
-    # ========================================================
-
-    metrics = pd.DataFrame({
-
-        "Metric": [
-
-            "Accuracy",
-
-            "Precision",
-
-            "Recall",
-
-            "F1 Score",
-
-            "ROC-AUC"
-        ],
-
-        "Score": [
-
-            accuracy,
-
-            precision,
-
-            recall,
-
-            f1,
-
-            roc_auc
-        ]
-    })
-
-
-    metrics_path = os.path.join(
-
-        output_directory,
-
         "evaluation_metrics.csv"
     )
 
-
-    metrics.to_csv(
-
-        metrics_path,
-
+    pd.DataFrame(
+        [metrics]
+    ).to_csv(
+        output_path,
         index=False
     )
 
-
     print(
-        f"\nEvaluation metrics saved to:"
+        f"Evaluation results saved to {output_path}"
     )
 
-    print(
-        metrics_path
-    )
-
-
-    # ========================================================
-    # SUMMARY
-    # ========================================================
-
-    print(
-        "\n" + "=" * 60
-    )
-
-    print(
-        "EVALUATION COMPLETE"
-    )
-
-    print(
-        "=" * 60
-    )
-
-
-# ============================================================
-# MAIN
-# ============================================================
 
 if __name__ == "__main__":
 
-    evaluate_model()
+    print("Loading PhysioNet patient files...")
+
+    patient_files = load_patient_files()
+
+    print(
+        f"Found {len(patient_files)} patient files."
+    )
+
+    metrics = evaluate_model(
+        patient_files
+    )
+
+    print("\nEvaluation Results")
+    print("-" * 40)
+
+    for name, value in metrics.items():
+        print(
+            f"{name.upper():10s}: {value:.4f}"
+        )
+
+    save_evaluation_results(metrics)

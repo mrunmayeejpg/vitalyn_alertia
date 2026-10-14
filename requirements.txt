@@ -3,3 +3,5 @@ streamlit-autorefresh
 pandas
 numpy
 matplotlib
+scikit-learn
+joblib

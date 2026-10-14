@@ -1,147 +1,170 @@
-🩺 Vitalyn Alertia
+# Vitalyn Alertia
 
-Live AI-based Patient Risk Monitoring Dashboard
+## Explainable AI-Based Early Sepsis Risk Monitoring System
 
-Vitalyn Alertia” combines ‘Vitalyn’ (from ‘vital’ + ‘lyn’, symbolizing life and care) and ‘Alertia’ (from ‘alert’), representing a system that continuously monitors patient vitals and alerts medical staff in real-time for timely intervention
+Vitalyn Alertia is an AI-powered clinical decision-support prototype designed to estimate the risk of sepsis from ICU patient time-series data.
 
-Vitalyn Alertia is a real-time patient monitoring system designed to help hospitals prioritize patients based on their vital signs and predicted risk levels using AI-inspired calculations. It combines dynamic dashboards, live simulations, and risk scoring to provide actionable insights to doctors instantly.
+The system uses real clinical data from the **PhysioNet Computing in Cardiology Challenge 2019: Early Prediction of Sepsis from Clinical Data**.
 
+> **Important:** Vitalyn Alertia is a research/educational prototype. Its predictions are risk estimates and do not constitute a medical diagnosis or treatment recommendation.
 
-🚀 Key Features
+---
 
-Real-Time Patient Monitoring
+## Key Features
 
-Displays vital signs (RR, BP, HR, Temp) for multiple patients.
+- Real ICU time-series data
+- Hour-by-hour patient monitoring
+- Early sepsis risk prediction
+- Multiple machine-learning models
+- Patient-level train/test separation
+- Physiological trend features
+- Risk-level classification
+- Interactive Streamlit dashboard
+- Explainable physiological indicators
+- SepsisLabel-based evaluation
 
-Patients dynamically reorder based on risk, simulating real-world triage.
+---
 
-AI-Powered Risk Assessment
+## Dataset
 
-Each patient’s risk score is calculated using vital signs and mental status.
+Vitalyn Alertia uses:
 
-Risk levels are categorized as Critical, Moderate, or Stable.
+**PhysioNet Computing in Cardiology Challenge 2019**
 
-Top 5 critical patients trigger alerts and are highlighted visually.
+The dataset contains hourly ICU observations for individual patients.
 
-Interactive Analytics
+Each patient is represented by a `.psv` file.
 
-Click on a patient card to see historical trends of vitals and AI risk score.
+Important variables include:
 
-Graphs dynamically show how patient conditions change over time.
+### Vital Signs
 
-Doctor-Friendly UI
+- Heart Rate (`HR`)
+- Oxygen Saturation (`O2Sat`)
+- Temperature (`Temp`)
+- Systolic Blood Pressure (`SBP`)
+- Mean Arterial Pressure (`MAP`)
+- Diastolic Blood Pressure (`DBP`)
+- Respiratory Rate (`Resp`)
+- End-Tidal CO2 (`EtCO2`)
 
-Green background and clear visual cues.
+### Laboratory Measurements
 
-Color-coded patient cards for quick understanding.
+- Lactate
+- WBC
+- Creatinine
+- Glucose
+- Platelets
+- Hgb
+- Hct
+- BUN
+- Bilirubin
+- Potassium
+- Sodium
+- Calcium
+- and other laboratory variables
 
-Login system for secure access.
+### Patient Information
 
+- Age
+- Gender
+- Unit1
+- Unit2
+- Hospital admission time
+- ICU length of stay (`ICULOS`)
 
-🧠 AI & ML Implementation
-1. Rule-Based AI Risk Score (Current Implementation)
+### Target
 
-Currently, Vitalyn Alertia uses a rule-based AI approach, inspired by clinical risk scoring:
+`SepsisLabel`
 
-Step 1: qSOFA Score
+- `0` → No sepsis label
+- `1` → Sepsis label
 
-qSOFA (quick Sequential Organ Failure Assessment) score is calculated based on 3 parameters:
+---
 
-Respiration Rate (RR ≥ 22 → +1)
+## Machine Learning Features
 
-Blood Pressure (BP ≤ 100 → +1)
+The current model uses the following features:
 
-Mental Status Confused → +1
+### Current physiological measurements
 
-The qSOFA score ranges from 0 to 3, which reflects the severity of potential deterioration.
+- Respiratory rate
+- Systolic blood pressure
+- Heart rate
+- Temperature
+- Age
 
-Step 2: AI Risk Calculation
+### Historical averages
 
-The AI risk score combines normalized vitals and qSOFA score
-This produces a value between 0 and 1.
-
-Thresholds for categorization:
-
-Critical: Top 5 AI_Risk patients
-
-Moderate: AI_Risk > 0.45
-
-Stable: AI_Risk ≤ 0.45
-
-This is essentially a lightweight predictive model, capable of real-time patient triage.
-
-2. Real-Time Simulation
-
-Patient vitals are updated every 4 seconds.
-
-Risk scores are recalculated live.
-
-Patient cards move dynamically to reflect changes in risk-based priority, giving doctors a visual sense of urgency.
-
-
-💡 Potential ML Extensions
-
-The current system uses a rule-based scoring mechanism, but it can be extended into a full ML-based predictive dashboard:
-
-Predictive Modeling
-
-Collect historical patient data to train models (Logistic Regression, Random Forest, Gradient Boosting, or Neural Networks).
-
-Predict risk of deterioration, ICU admission, or need for emergency intervention.
-
-Time-Series Forecasting
-
-Use sequential models (LSTM, GRU) to predict vital trends and future risk scores.
-
-Multi-Feature Integration
-
-Include lab test results, imaging, demographics, and comorbidities to improve predictive accuracy.
-
-Alert Optimization
-
-Automatically trigger alerts via email/SMS for high-risk patients.
-
-Prioritize doctors’ actions based on predicted severity.
-
-Hospital-Scale Deployment
-
-Multi-hospital support to track hundreds of patients.
-
-Aggregate AI predictions for hospital resource planning.
-
-
-💻 Installation & Usage
-1. Clone the Repository
-git clone https://github.com/mrunmayeejpg/vitalyn_alertia.git
-cd vitalyn_alertia
-
-2. Create a Virtual Environment (Optional)
-python -m venv venv
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
-
-3. Install Dependencies
-pip install -r requirements.txt
-
-4. Run the Dashboard
-streamlit run app.py
-
-5. Login
-
-Username: admin
-
-Password: admin123
-
-
-📊 Visual Features
-
-Dynamic Patient Cards: Color-coded, move according to risk.
-
-Trend Graphs: Larger, clean graphs showing vital trends and AI risk.
-
-Alerts: Horizontal bars highlight patients needing immediate attention.
-
-Doctor Panel: Shows on-duty doctor and logout option.
-
+- Average respiratory rate
+- Average systolic blood pressure
+- Average heart rate
+- Average temperature
+
+### Recent trends
+
+- Respiratory-rate trend
+- Blood-pressure trend
+- Heart-rate trend
+- Temperature trend
+
+The model therefore uses both the patient's current physiological state and recent changes.
+
+---
+
+## Machine Learning Models
+
+The training pipeline compares:
+
+1. Logistic Regression
+2. Random Forest
+3. Gradient Boosting
+
+Class imbalance is handled during training.
+
+Models are evaluated using:
+
+- Accuracy
+- Precision
+- Recall
+- F1-score
+- ROC-AUC
+- PR-AUC
+
+The final model is selected based on F1-score.
+
+---
+
+## Project Structure
+
+```text
+vitalyn_alertia/
+│
+├── data/
+│   └── raw/
+│       └── training_setA/
+│           ├── p000001.psv
+│           ├── p000002.psv
+│           └── ...
+│
+├── logic/
+│   ├── ai_predict.py
+│   └── explainability.py
+│
+├── ml/
+│   ├── features.py
+│   ├── train.py
+│   ├── evaluate.py
+│   ├── model.py
+│   └── saved_models/
+│       └── sepsis_model.pkl
+│
+├── utils/
+│   └── data_loader.py
+│
+├── visualization/
+│   └── charts.py
+│
+├── app.py
+├── requirements.txt
+└── README.md

@@ -1,487 +1,376 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+
+from logic.ai_predict import predict_escalation
+from utils.data_loader import list_patients, load_patient
+from visualization.charts import plot_vital_trends
+
 
 # ============================================================
-# PAGE CONFIG
+# PAGE
 # ============================================================
 
 st.set_page_config(
     page_title="Vitalyn Alertia",
-    page_icon="🩺",
-    layout="wide"
+    page_icon="🫀",
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 
 # ============================================================
-# IMPORTS
+# CONSTANTS
 # ============================================================
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+CRITICAL_THRESHOLD = 0.75
+MODERATE_THRESHOLD = 0.45
 
-from logic.ai_predict import predict_escalation
+# Number of cards actually rendered on screen.
+# This is NOT the number of patients in the dataset.
+
+# ---- Hospital & Doctor selector (sidebar) ----
+# Placeholder data – replace with real source as needed
+hospitals = [
+    "City General Hospital",
+    "St. Mary's Medical Center",
+    "Metro Health Clinic",
+    "Sunrise Community Hospital",
+]
+
+# Simple mapping of doctors per hospital (example)
+doctors_by_hospital = {
+    "City General Hospital": ["Dr. Alice Smith", "Dr. Bob Jones"],
+    "St. Mary's Medical Center": ["Dr. Carol Lee", "Dr. Dan Patel"],
+    "Metro Health Clinic": ["Dr. Eva Green", "Dr. Frank Wu"],
+    "Sunrise Community Hospital": ["Dr. Grace Kim", "Dr. Henry Liu"],
+}
+
+selected_hospital = st.sidebar.selectbox("Select Hospital", hospitals)
+selected_doctor = st.sidebar.selectbox(
+    "Select Doctor",
+    doctors_by_hospital.get(selected_hospital, []),
+)
+
+st.sidebar.markdown("---")
+st.sidebar.write(f"**Hospital:** {selected_hospital}")
+st.sidebar.write(f"**Doctor:** {selected_doctor}")
+# This is NOT the number of patients in the dataset.
+DISPLAY_COUNT = 30
 
 
 # ============================================================
-# AUTO REFRESH
+# SIMPLE CSS
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+
+    .stApp {
+        background-color: #0e1117;
+    }
+
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+    }
+
+    div[data-testid="stMetric"] {
+        padding: 0;
+    }
+
+    div[data-testid="stMetricLabel"] {
+        font-size: 0.72rem;
+    }
+
+    div[data-testid="stMetricValue"] {
+        font-size: 1.05rem;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 16px;
+        background-color: rgba(255,255,255,0.025);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def safe_float(value):
+
+    try:
+        value = float(value)
+
+        if not np.isfinite(value):
+            return None
+
+        return value
+
+    except (TypeError, ValueError):
+
+        return None
+
+
+def latest_value(df, column):
+
+    if df is None:
+        return None
+
+    if column not in df.columns:
+        return None
+
+    values = pd.to_numeric(
+        df[column],
+        errors="coerce"
+    ).dropna()
+
+    if values.empty:
+        return None
+
+    return safe_float(
+        values.iloc[-1]
+    )
+
+
+def format_value(
+    value,
+    unit="",
+    decimals=1
+):
+
+    if value is None:
+        return "—"
+
+    return f"{value:.{decimals}f}{unit}"
+
+
+def get_risk_background(risk):
+
+    if risk >= CRITICAL_THRESHOLD:
+        return "🔴"
+
+    if risk >= MODERATE_THRESHOLD:
+        return "🟡"
+
+    return "🟢"
+
+
+# ============================================================
+# LOAD PATIENT LIST
 # ============================================================
 
 try:
-    from streamlit_autorefresh import st_autorefresh
 
-    st_autorefresh(
-        interval=4000,
-        key="vitalyn_refresh"
+    patient_ids = list_patients()
+
+except Exception as e:
+
+    st.error(
+        f"Could not load patient list: {e}"
     )
 
-except ImportError:
-    pass
+    st.stop()
+
+
+if not patient_ids:
+
+    st.warning(
+        "No PhysioNet patient files were found."
+    )
+
+    st.stop()
 
 
 # ============================================================
-# HEADER
+# CACHED PATIENT LOADING
 # ============================================================
 
-st.title("🩺 Vitalyn Alertia")
-
-st.caption(
-    "AI-Based Early Patient Risk Monitoring System"
+@st.cache_data(
+    show_spinner=False
 )
+def get_patient_data(patient_id):
 
-st.divider()
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-with st.sidebar:
-
-    st.header("👨‍⚕️ Doctor Panel")
-
-    doctors = [
-        "Dr. A. Mehta",
-        "Dr. S. Rao",
-        "Dr. K. Sharma",
-        "Dr. R. Iyer",
-        "Dr. P. Kulkarni",
-        "Dr. N. Verma",
-        "Dr. M. Das",
-        "Dr. T. Sen",
-        "Dr. H. Kapoor",
-        "Dr. J. Malhotra"
-    ]
-
-    selected_doctor = st.selectbox(
-        "Doctor on Duty",
-        doctors
-    )
-
-    st.markdown(
-        f"**Currently Viewing:** {selected_doctor}"
-    )
-
-    st.divider()
-
-    st.info(
-        "This system is an academic prototype for "
-        "early risk monitoring and is not a medical diagnosis."
+    return load_patient(
+        patient_id
     )
 
 
 # ============================================================
-# GENERATE PATIENTS
+# CACHED PREDICTION
 # ============================================================
 
-def generate_patients(n=60):
+@st.cache_data(
+    show_spinner=False
+)
+def get_prediction(patient_id):
 
-    patients = []
+    try:
 
-    for i in range(n):
+        df = get_patient_data(
+            patient_id
+        )
 
-        patients.append({
+        if df is None or df.empty:
+            return None
 
-            "patient_id": f"P-{i + 1:03}",
+        from ml.features import extract_features
 
-            "age": np.random.randint(
-                18,
-                90
-            ),
+        features = extract_features(
+            df
+        )
 
-            "rr": np.random.randint(
-                16,
-                26
-            ),
+        risk = predict_escalation(
+            features
+        )
 
-            "bp": np.random.randint(
-                90,
-                140
-            ),
+        return float(risk)
 
-            "hr": np.random.randint(
-                60,
-                120
-            ),
+    except Exception:
 
-            "temp": round(
-                np.random.uniform(
-                    36.5,
-                    38.5
-                ),
-                1
-            ),
-
-            "mental": "Alert"
-        })
-
-    return pd.DataFrame(patients)
+        return None
 
 
 # ============================================================
 # SESSION STATE
 # ============================================================
 
-# ------------------------------------------------------------
-# Patient data
-# ------------------------------------------------------------
+if "predictions" not in st.session_state:
 
-if "patients" not in st.session_state:
-
-    st.session_state.patients = generate_patients()
-
-else:
-
-    # Fix old session data created before age was added
-    if "age" not in st.session_state.patients.columns:
-
-        st.session_state.patients["age"] = np.random.randint(
-            18,
-            90,
-            len(st.session_state.patients)
-        )
+    st.session_state.predictions = {}
 
 
-# ------------------------------------------------------------
-# History
-# ------------------------------------------------------------
+if "predictions_loaded" not in st.session_state:
 
-if "history" not in st.session_state:
-
-    st.session_state.history = {}
-
-
-# Make sure every patient has history
-
-for pid in st.session_state.patients["patient_id"]:
-
-    if pid not in st.session_state.history:
-
-        st.session_state.history[pid] = []
-
-
-# ------------------------------------------------------------
-# Selected patient
-# ------------------------------------------------------------
-
-if "selected_patient" not in st.session_state:
-
-    st.session_state.selected_patient = None
+    st.session_state.predictions_loaded = False
 
 
 # ============================================================
-# CURRENT PATIENT DATA
+# HEADER
 # ============================================================
 
-df = st.session_state.patients.copy()
+st.title(
+    "🫀 Vitalyn Alertia"
+)
+
+st.caption(
+    "AI-powered ICU patient risk monitoring using real clinical time-series data."
+)
 
 
-# Safety check for age
+# ============================================================
+# TOP CONTROL
+# ============================================================
 
-if "age" not in df.columns:
+control_left, control_right = st.columns(
+    [1, 5]
+)
 
-    df["age"] = np.random.randint(
-        18,
-        90,
-        len(df)
+with control_left:
+
+    refresh_clicked = st.button(
+        "↻ Refresh Predictions",
+        use_container_width=True,
+    )
+
+with control_right:
+
+    st.caption(
+        f"{len(patient_ids):,} patients available"
     )
 
 
 # ============================================================
-# LIVE VITAL SIMULATION
+# INITIAL PATIENTS
 # ============================================================
 
-for i in df.index:
+# On first load, only calculate a small batch.
+# This allows the UI to appear immediately.
 
-    # Respiratory rate
-    df.at[i, "rr"] = max(
-        8,
-        int(
-            df.at[i, "rr"]
-            + np.random.randint(-1, 2)
+if not st.session_state.predictions_loaded:
+
+    initial_ids = patient_ids[
+        :min(DISPLAY_COUNT, len(patient_ids))
+    ]
+
+    for patient_id in initial_ids:
+
+        risk = get_prediction(
+            patient_id
         )
-    )
 
-    # Blood pressure
-    df.at[i, "bp"] = max(
-        60,
-        int(
-            df.at[i, "bp"]
-            + np.random.randint(-3, 4)
-        )
-    )
+        st.session_state.predictions[
+            patient_id
+        ] = risk
 
-    # Heart rate
-    df.at[i, "hr"] = max(
-        40,
-        int(
-            df.at[i, "hr"]
-            + np.random.randint(-2, 3)
-        )
-    )
+    st.session_state.predictions_loaded = True
 
-    # Temperature
-    df.at[i, "temp"] = round(
-        np.clip(
-            df.at[i, "temp"]
-            + np.random.uniform(
-                -0.05,
-                0.05
-            ),
-            35,
-            41
-        ),
-        1
-    )
 
-    # Mental status
-    if (
-        df.at[i, "rr"] >= 22
-        or df.at[i, "bp"] <= 100
+# ============================================================
+# MANUAL REFRESH
+# ============================================================
+
+if refresh_clicked:
+
+    st.session_state.predictions = {}
+
+    # Calculate only the first batch again.
+    initial_ids = patient_ids[
+        :min(DISPLAY_COUNT, len(patient_ids))
+    ]
+
+    with st.spinner(
+        "Updating predictions..."
     ):
 
-        df.at[i, "mental"] = "Confused"
+        for patient_id in initial_ids:
 
-    else:
-
-        df.at[i, "mental"] = "Alert"
-
-
-# ============================================================
-# QSOFA CALCULATION
-# ============================================================
-
-qsofa_scores = []
-
-for _, patient in df.iterrows():
-
-    score = (
-
-        int(
-            patient["rr"] >= 22
-        )
-
-        +
-
-        int(
-            patient["bp"] <= 100
-        )
-
-        +
-
-        int(
-            patient["mental"] == "Confused"
-        )
-    )
-
-    qsofa_scores.append(score)
-
-
-df["qSOFA"] = qsofa_scores
-
-
-# ============================================================
-# ML RISK PREDICTION
-# ============================================================
-
-risk_scores = []
-
-for _, patient in df.iterrows():
-
-    # ========================================================
-    # EXACT FEATURES USED DURING MODEL TRAINING
-    #
-    # 1. resp
-    # 2. bp
-    # 3. hr
-    # 4. temp
-    # 5. age
-    # 6. qsofa
-    # ========================================================
-
-    features = {
-
-        "resp": float(
-            patient["rr"]
-        ),
-
-        "bp": float(
-            patient["bp"]
-        ),
-
-        "hr": float(
-            patient["hr"]
-        ),
-
-        "temp": float(
-            patient["temp"]
-        ),
-
-        "age": float(
-            patient["age"]
-        ),
-
-        "qsofa": float(
-            patient["qSOFA"]
-        )
-    }
-
-
-    try:
-
-        risk = predict_escalation(
-            features
-        )
-
-        risk = float(
-            np.clip(
-                risk,
-                0,
-                1
+            risk = get_prediction(
+                patient_id
             )
-        )
 
-    except Exception as error:
-
-        st.error(
-            f"ML prediction error: {error}"
-        )
-
-        risk = 0.0
+            st.session_state.predictions[
+                patient_id
+            ] = risk
 
 
-    risk_scores.append(
-        risk
+# ============================================================
+# CURRENT RESULTS
+# ============================================================
+
+results = []
+
+for patient_id, risk in (
+    st.session_state.predictions.items()
+):
+
+    results.append(
+        {
+            "patient_id": patient_id,
+            "risk": risk,
+            "data": get_patient_data(
+                patient_id
+            ),
+        }
     )
 
 
-df["AI_Risk"] = risk_scores
-
-
-# ============================================================
-# STATUS
-# ============================================================
-
-def get_status(risk):
-
-    if risk >= 0.75:
-
-        return "Critical"
-
-    elif risk >= 0.45:
-
-        return "Moderate"
-
-    else:
-
-        return "Stable"
-
-
-df["Status"] = [
-
-    get_status(
-        risk
-    )
-
-    for risk in df["AI_Risk"]
-]
-
-
-# ============================================================
-# UPDATE HISTORY
-# ============================================================
-
-for _, patient in df.iterrows():
-
-    pid = patient["patient_id"]
-
-    if pid not in st.session_state.history:
-
-        st.session_state.history[pid] = []
-
-
-    st.session_state.history[pid].append({
-
-        "rr":
-            patient["rr"],
-
-        "bp":
-            patient["bp"],
-
-        "hr":
-            patient["hr"],
-
-        "temp":
-            patient["temp"],
-
-        "risk":
-            patient["AI_Risk"]
-    })
-
-
-    # Keep last 30 readings
-
-    st.session_state.history[pid] = (
-        st.session_state.history[pid][-30:]
-    )
-
-
-# ============================================================
-# SORT PATIENTS BY RISK
-# ============================================================
-
-df = df.sort_values(
-    "AI_Risk",
-    ascending=False
-).reset_index(
-    drop=True
-)
-
-
-# Save updated patient data
-
-st.session_state.patients = df
-
-
-# ============================================================
-# SUMMARY COUNTS
-# ============================================================
-
-critical_count = len(
-    df[
-        df["Status"] == "Critical"
-    ]
-)
-
-moderate_count = len(
-    df[
-        df["Status"] == "Moderate"
-    ]
-)
-
-stable_count = len(
-    df[
-        df["Status"] == "Stable"
-    ]
+# Highest risk first
+results.sort(
+    key=lambda x: (
+        x["risk"]
+        if x["risk"] is not None
+        else -1
+    ),
+    reverse=True,
 )
 
 
@@ -489,547 +378,539 @@ stable_count = len(
 # SUMMARY
 # ============================================================
 
-st.subheader(
-    "📊 Live Monitoring Summary"
+valid_results = [
+    result
+    for result in results
+    if result["risk"] is not None
+]
+
+
+high_count = sum(
+    result["risk"] >= CRITICAL_THRESHOLD
+    for result in valid_results
 )
 
-summary1, summary2, summary3, summary4 = st.columns(4)
+moderate_count = sum(
+    MODERATE_THRESHOLD
+    <= result["risk"]
+    < CRITICAL_THRESHOLD
+    for result in valid_results
+)
+
+low_count = sum(
+    result["risk"] < MODERATE_THRESHOLD
+    for result in valid_results
+)
 
 
-with summary1:
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
 
     st.metric(
-        "Total Patients",
-        len(df)
+        "Patients",
+        f"{len(patient_ids):,}"
     )
 
-
-with summary2:
+with col2:
 
     st.metric(
-        "🔴 Critical",
-        critical_count
+        "High Risk",
+        high_count
     )
 
-
-with summary3:
+with col3:
 
     st.metric(
-        "🟠 Moderate",
+        "Moderate Risk",
         moderate_count
     )
 
-
-with summary4:
+with col4:
 
     st.metric(
-        "🟢 Stable",
-        stable_count
+        "Lower Risk",
+        low_count
     )
 
 
-st.divider()
-
-
 # ============================================================
-# MAIN LAYOUT
+# TABS
 # ============================================================
 
-left, right = st.columns(
-    [3, 1]
+monitor_tab, analytics_tab, ai_tab = st.tabs(
+    [
+        "🏥 Patient Monitor",
+        "📊 Analytics",
+        "🤖 AI Recommendations",
+    ]
 )
 
 
 # ============================================================
-# PATIENT BOARD
+# PATIENT MONITOR
 # ============================================================
 
-with left:
+with monitor_tab:
 
     st.subheader(
-        "🚨 Live Patient Board"
+        "Live Patient Monitor"
     )
 
     st.caption(
-        "Patients are ranked according to predicted ML risk."
+        f"Showing the highest-risk patients from the "
+        f"{len(patient_ids):,} available patients."
     )
+    cards_col, trend_col = st.columns([2, 1])
 
-
-    patient_columns = st.columns(3)
-
-
-    for index, patient in df.iterrows():
-
-        pid = patient["patient_id"]
-
-        status = patient["Status"]
-
-        risk = patient["AI_Risk"]
-
-
-        with patient_columns[
-            index % 3
-        ]:
-
-            # ------------------------------------------------
-            # Status
-            # ------------------------------------------------
-
-            if status == "Critical":
-
-                st.error(
-                    "🔴 CRITICAL"
-                )
-
-            elif status == "Moderate":
-
-                st.warning(
-                    "🟠 MODERATE"
-                )
-
-            else:
-
-                st.success(
-                    "🟢 STABLE"
-                )
-
-
-            # ------------------------------------------------
-            # Patient ID
-            # ------------------------------------------------
-
-            st.markdown(
-                f"### {pid}"
+    with cards_col:
+        if not results:
+            st.info(
+                "No predictions available yet."
             )
+        else:
+            # Sort results by descending risk, placing None at the end (red → yellow → green)
+            results = sorted(results, key=lambda r: (r["risk"] is None, -(r["risk"] or 0)))
+            for row_start in range(0, len(results), 3):
+                row = results[row_start:row_start + 3]
 
-
-            st.write(
-                f"**Age:** {patient['age']} years"
-            )
-
-
-            # ------------------------------------------------
-            # Vitals
-            # ------------------------------------------------
-
-            vital_col1, vital_col2 = st.columns(2)
-
-
-            with vital_col1:
-
-                st.write(
-                    f"**RR:** {patient['rr']}"
+                columns = st.columns(
+                    len(row)
                 )
 
-                st.write(
-                    f"**HR:** {patient['hr']}"
-                )
+                for column, result in zip(
+                    columns,
+                    row
+                ):
+                    with column:
+                        patient_id = result["patient_id"]
+                        risk = result["risk"]
+                        df = result["data"]
+
+                        if risk is None:
+                            # Simple grey card for unavailable prediction
+                            card_html = f"""
+                            <div style='background-color:#f0f0f0;padding:12px;border-radius:8px;margin-bottom:12px'>
+                              <h4 style='margin:0'>{patient_id}</h4>
+                              <p style='margin:4px 0'>Prediction unavailable</p>
+                            </div>
+                            """
+                            st.markdown(card_html, unsafe_allow_html=True)
+                            continue
+
+                        # Determine background color based on risk
+                        if risk >= CRITICAL_THRESHOLD:
+                            bg_color = "#8B0000"  # dark red
+                        elif risk >= MODERATE_THRESHOLD:
+                            bg_color = "#B8860B"  # dark yellow/goldenrod
+                        else:
+                            bg_color = "#006400"  # dark green
+
+                        # Build card HTML
+                        card_html = f"""
+                        <div style='background-color:{bg_color};padding:12px;border-radius:8px;margin-bottom:12px'>
+                          <h4 style='margin:0'>{patient_id}</h4>
+                          <p style='margin:4px 0'>AI Risk: {risk*100:.1f}%</p>
+                        """
+
+                        # Basic patient info
+                        age = latest_value(df, "Age")
+                        icu_hour = latest_value(df, "ICULOS")
+                        card_html += f"<p style='margin:2px 0'>Age: {format_value(age,' yrs')} • ICU Hour: {format_value(icu_hour,'',0)}</p>"
+
+                        # Vital metrics list
+                        vitals = {
+                            "Resp": ("/min", None),
+                            "HR": (" bpm", 0),
+                            "SBP": (" mmHg", 0),
+                            "Temp": (" °C", None),
+                        }
+                        vitals_html = "<ul style='padding-left:20px;margin:4px 0'>"
+                        for name, (unit, dec) in vitals.items():
+                            val = latest_value(df, name)
+                            vitals_html += f"<li>{name}: {format_value(val, unit, dec if dec is not None else 1)}</li>"
+                        vitals_html += "</ul>"
+                        card_html += vitals_html
+                        card_html += "</div>"
+                        st.markdown(card_html, unsafe_allow_html=True)
+
+        # Duplicate card rendering block removed
 
 
-            with vital_col2:
-
-                st.write(
-                    f"**BP:** {patient['bp']}"
-                )
-
-                st.write(
-                    f"**Temp:** {patient['temp']} °C"
-                )
 
 
-            st.write(
-                f"**qSOFA:** {patient['qSOFA']}"
+    with trend_col:
+        st.divider()
+        st.subheader(
+            "🔎 Patient Trend Explorer"
+        )
+        if patient_ids:
+            focus_patient = st.selectbox(
+                "Select patient",
+                patient_ids
             )
-
-
-            # ------------------------------------------------
-            # Risk
-            # ------------------------------------------------
-
-            st.write(
-                f"**AI Risk: {risk * 100:.1f}%**"
+            focus_df = get_patient_data(
+                focus_patient
             )
-
-
-            st.progress(
-                float(risk)
+            focus_risk = get_prediction(
+                focus_patient
             )
-
-
-            # ------------------------------------------------
-            # Details button
-            # ------------------------------------------------
-
-            if st.button(
-                "View Details",
-                key=f"view_{pid}"
+            if focus_risk is not None:
+                st.metric(
+                    "Current AI Risk",
+                    f"{focus_risk * 100:.1f}%"
+                )
+            if (
+                focus_df is not None
+                and not focus_df.empty
             ):
-
-                st.session_state.selected_patient = pid
-
-                st.rerun()
-
-
-            st.divider()
-
-
-# ============================================================
-# ANALYTICS PANEL
-# ============================================================
-
-with right:
-
-    st.subheader(
-        "📈 Patient Analytics"
-    )
+                try:
+                    fig = plot_vital_trends(
+                        focus_df
+                    )
+                    if fig is not None:
+                        st.pyplot(
+                            fig,
+                            use_container_width=True
+                        )
+                except Exception as e:
+                    st.warning(
+                        f"Could not display trend: {e}"
+                    )
 
 
-    selected_pid = (
-        st.session_state.selected_patient
-    )
+    # ========================================================
+    # DATASET INFO
+    # ========================================================
 
+    st.divider()
 
-    if selected_pid is None:
+    with st.expander(
+        "📊 Dataset Information"
+    ):
 
-        st.info(
-            "Select a patient from the "
-            "patient board to view detailed analytics."
+        st.write(
+            "Vitalyn Alertia uses the PhysioNet "
+            "Computing in Cardiology Challenge 2019 "
+            "Early Prediction of Sepsis dataset."
+        )
+
+        st.write(
+            f"Patients available locally: "
+            f"**{len(patient_ids):,}**"
+        )
+
+        st.write(
+            "Each patient file contains hourly ICU "
+            "measurements and a SepsisLabel target."
+        )
+
+        st.write(
+            "The model uses physiological time-series "
+            "features including respiratory rate, "
+            "systolic blood pressure, heart rate, "
+            "temperature, age, historical averages, "
+            "and short-term trends."
         )
 
 
-    else:
+# ============================================================
+# ANALYTICS
+# ============================================================
 
-        selected_rows = df[
-            df["patient_id"]
-            == selected_pid
-        ]
+with analytics_tab:
+
+# Removed header and caption as per user request
+
+    col1, col3, col4 = st.columns(3)
+
+    with col1:
+
+        st.metric(
+            "Total Dataset",
+            f"{len(patient_ids):,}"
+        )
 
 
-        if selected_rows.empty:
 
-            st.warning(
-                "Patient not found."
+    with col3:
+
+        if valid_results:
+
+            avg_risk = np.mean(
+                [
+                    r["risk"]
+                    for r in valid_results
+                ]
+            )
+
+            st.metric(
+                "Average Risk",
+                f"{avg_risk * 100:.1f}%"
             )
 
         else:
 
-            patient = selected_rows.iloc[0]
-
-
-            # ------------------------------------------------
-            # Patient
-            # ------------------------------------------------
-
-            st.markdown(
-                f"## {patient['patient_id']}"
+            st.metric(
+                "Average Risk",
+                "—"
             )
 
+    with col4:
 
-            st.write(
-                f"**Doctor:** {selected_doctor}"
+        if valid_results:
+
+            max_risk = max(
+                r["risk"]
+                for r in valid_results
             )
-
-
-            st.write(
-                f"**Age:** {patient['age']} years"
-            )
-
-
-            st.write(
-                f"**Status:** {patient['Status']}"
-            )
-
-
-            st.write(
-                f"**qSOFA:** {patient['qSOFA']}"
-            )
-
-
-            # ------------------------------------------------
-            # Risk
-            # ------------------------------------------------
-
-            risk = patient["AI_Risk"]
-
 
             st.metric(
-                "AI Risk Probability",
-                f"{risk * 100:.1f}%"
+                "Highest Risk",
+                f"{max_risk * 100:.1f}%"
             )
 
+        else:
 
-            st.progress(
-                float(risk)
+            st.metric(
+                "Highest Risk",
+                "—"
             )
 
+    st.divider()
 
-            if risk >= 0.75:
+    if valid_results:
 
-                st.error(
-                    "⚠️ High predicted risk. "
-                    "Patient requires immediate attention."
-                )
-
-            elif risk >= 0.45:
-
-                st.warning(
-                    "⚠️ Moderate predicted risk. "
-                    "Patient should be monitored closely."
-                )
-
-            else:
-
-                st.success(
-                    "✓ Lower predicted risk. "
-                    "Continue routine monitoring."
-                )
-
-
-            st.divider()
-
-
-            # ------------------------------------------------
-            # Current Vitals
-            # ------------------------------------------------
-
-            st.markdown(
-                "### Current Vital Signs"
-            )
-
-
-            vital_col1, vital_col2 = st.columns(2)
-
-
-            with vital_col1:
-
-                st.metric(
-                    "Resp. Rate",
-                    patient["rr"]
-                )
-
-                st.metric(
-                    "Heart Rate",
-                    patient["hr"]
-                )
-
-
-            with vital_col2:
-
-                st.metric(
-                    "Systolic BP",
-                    patient["bp"]
-                )
-
-                st.metric(
-                    "Temperature",
-                    f"{patient['temp']} °C"
-                )
-
-
-            st.divider()
-
-
-            # ------------------------------------------------
-            # Historical Trends
-            # ------------------------------------------------
-
-            st.markdown(
-                "### 📈 Vital Trends"
-            )
-
-
-            history = (
-                st.session_state.history[
-                    selected_pid
+        distribution = pd.DataFrame(
+            {
+                "Risk Group": [
+                    "High",
+                    "Moderate",
+                    "Lower"
+                ],
+                "Patients": [
+                    high_count,
+                    moderate_count,
+                    low_count
                 ]
+            }
+        )
+
+        st.subheader(
+            "Risk Distribution"
+        )
+
+        st.bar_chart(
+            distribution.set_index(
+                "Risk Group"
+            )
+        )
+
+        st.divider()
+
+        st.subheader(
+            "Evaluated Patients"
+        )
+
+        rows = []
+
+        for result in valid_results:
+
+            df = result["data"]
+
+            rows.append(
+                {
+                    "Patient":
+                        result["patient_id"],
+
+                    "AI Risk":
+                        f"{result['risk'] * 100:.1f}%",
+
+                    "Age":
+                        latest_value(
+                            df,
+                            "Age"
+                        ),
+
+                    "Resp":
+                        latest_value(
+                            df,
+                            "Resp"
+                        ),
+
+                    "SBP":
+                        latest_value(
+                            df,
+                            "SBP"
+                        ),
+
+                    "HR":
+                        latest_value(
+                            df,
+                            "HR"
+                        ),
+
+                    "Temp":
+                        latest_value(
+                            df,
+                            "Temp"
+                        ),
+                }
             )
 
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True
+        )
 
-            if len(history) > 1:
+    else:
 
-                hist = pd.DataFrame(
-                    history
+        st.info(
+            "No patient predictions are currently available."
+        )
+
+
+# ============================================================
+# AI RECOMMENDATIONS
+# ============================================================
+
+with ai_tab:
+
+    st.header(
+        "🤖 AI Recommendations"
+    )
+
+    st.caption(
+        "Observations generated from the current model risk "
+        "and physiological measurements."
+    )
+
+    if not valid_results:
+
+        st.info(
+            "No predictions available."
+        )
+
+    else:
+
+        for result in valid_results[:15]:
+
+            patient_id = result[
+                "patient_id"
+            ]
+
+            risk = result[
+                "risk"
+            ]
+
+            df = result[
+                "data"
+            ]
+
+            observations = []
+
+            resp = latest_value(
+                df,
+                "Resp"
+            )
+
+            sbp = latest_value(
+                df,
+                "SBP"
+            )
+
+            hr = latest_value(
+                df,
+                "HR"
+            )
+
+            temp = latest_value(
+                df,
+                "Temp"
+            )
+
+            if resp is not None and resp >= 24:
+
+                observations.append(
+                    f"Respiratory rate elevated at "
+                    f"{resp:.1f}/min."
                 )
 
+            if resp is not None and resp <= 8:
 
-                # --------------------------------------------
-                # Respiratory Rate
-                # --------------------------------------------
-
-                fig1, ax1 = plt.subplots(
-                    figsize=(6, 3)
+                observations.append(
+                    f"Respiratory rate low at "
+                    f"{resp:.1f}/min."
                 )
 
+            if sbp is not None and sbp < 90:
 
-                ax1.plot(
-                    hist["rr"],
-                    linewidth=2,
-                    label="Respiratory Rate"
+                observations.append(
+                    f"Systolic blood pressure low at "
+                    f"{sbp:.0f} mmHg."
                 )
 
+            if hr is not None and hr >= 100:
 
-                ax1.set_xlabel(
-                    "Reading"
+                observations.append(
+                    f"Heart rate elevated at "
+                    f"{hr:.0f} bpm."
                 )
 
-                ax1.set_ylabel(
-                    "RR"
+            if hr is not None and hr < 50:
+
+                observations.append(
+                    f"Heart rate low at "
+                    f"{hr:.0f} bpm."
                 )
 
-                ax1.set_title(
-                    "Respiratory Rate Trend"
+            if temp is not None and temp >= 38:
+
+                observations.append(
+                    f"Temperature elevated at "
+                    f"{temp:.1f} °C."
                 )
 
+            if temp is not None and temp < 36:
 
-                ax1.grid(
-                    True,
-                    linestyle="--",
-                    alpha=0.4
+                observations.append(
+                    f"Temperature low at "
+                    f"{temp:.1f} °C."
                 )
 
-
-                ax1.legend()
-
-
-                st.pyplot(
-                    fig1,
-                    use_container_width=True
-                )
-
-
-                plt.close(fig1)
-
-
-                # --------------------------------------------
-                # Blood Pressure
-                # --------------------------------------------
-
-                fig2, ax2 = plt.subplots(
-                    figsize=(6, 3)
-                )
-
-
-                ax2.plot(
-                    hist["bp"],
-                    linewidth=2,
-                    label="Systolic BP"
-                )
-
-
-                ax2.set_xlabel(
-                    "Reading"
-                )
-
-                ax2.set_ylabel(
-                    "BP"
-                )
-
-                ax2.set_title(
-                    "Blood Pressure Trend"
-                )
-
-
-                ax2.grid(
-                    True,
-                    linestyle="--",
-                    alpha=0.4
-                )
-
-
-                ax2.legend()
-
-
-                st.pyplot(
-                    fig2,
-                    use_container_width=True
-                )
-
-
-                plt.close(fig2)
-
-
-                # --------------------------------------------
-                # AI Risk
-                # --------------------------------------------
-
-                fig3, ax3 = plt.subplots(
-                    figsize=(6, 3)
-                )
-
-
-                ax3.plot(
-                    hist["risk"] * 100,
-                    linewidth=2,
-                    label="AI Risk"
-                )
-
-
-                ax3.set_xlabel(
-                    "Reading"
-                )
-
-                ax3.set_ylabel(
-                    "Risk (%)"
-                )
-
-                ax3.set_title(
-                    "AI Risk Trend"
-                )
-
-
-                ax3.set_ylim(
-                    0,
-                    100
-                )
-
-
-                ax3.grid(
-                    True,
-                    linestyle="--",
-                    alpha=0.4
-                )
-
-
-                ax3.legend()
-
-
-                st.pyplot(
-                    fig3,
-                    use_container_width=True
-                )
-
-
-                plt.close(fig3)
-
-
-            else:
-
-                st.info(
-                    "Collecting historical readings..."
-                )
-
-
-            # ------------------------------------------------
-            # Clear selection
-            # ------------------------------------------------
-
-            if st.button(
-                "Clear Selection",
-                key="clear_patient"
+            with st.container(
+                border=True
             ):
 
-                st.session_state.selected_patient = None
+                left, right = st.columns(
+                    [3, 1]
+                )
 
-                st.rerun()
+                with left:
 
+                    st.markdown(
+                        f"### {patient_id}"
+                    )
 
-# ============================================================
-# FOOTER
-# ============================================================
+                with right:
 
-st.divider()
+                    st.metric(
+                        "AI Risk",
+                        f"{risk * 100:.1f}%"
+                    )
 
-st.caption(
-    "Vitalyn Alertia | Machine Learning-based "
-    "Early Patient Risk Monitoring | Academic Prototype"
-)
+                if observations:
+
+                    for observation in observations:
+
+                        st.write(
+                            f"• {observation}"
+                        )
+
+                else:
+
+                    st.write(
+                        "No major abnormality identified "
+                        "from the displayed vital signs."
+                    )
