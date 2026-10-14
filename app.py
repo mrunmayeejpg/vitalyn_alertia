@@ -55,8 +55,9 @@ selected_doctor = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 st.sidebar.write(f"**Hospital:** {selected_hospital}")
 st.sidebar.write(f"**Doctor:** {selected_doctor}")
-# This is NOT the number of patients in the dataset.
-DISPLAY_COUNT = 30
+# Number of patients to evaluate on app start (and on refresh).
+# This determines how many patient predictions are computed and cached.
+DISPLAY_COUNT = 300
 
 
 # ============================================================

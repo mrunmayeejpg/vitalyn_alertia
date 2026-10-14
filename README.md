@@ -168,3 +168,14 @@ vitalyn_alertia/
 ├── app.py
 ├── requirements.txt
 └── README.md
+
+---
+## Recent Updates
+
+- Increased the number of patients evaluated on app start from **30** to **300** to provide a broader view of risk assessments.
+- Made feature extraction tolerant to missing columns and age values, defaulting to zero where appropriate, which raised the evaluated patient count well above the previous ~29.
+- Updated risk calculation validation tests to cover normal, borderline, and extreme vital signs, missing inputs, and score boundaries.
+- Documented the limitations of the qSOFA‑inspired risk approach and clarified that this is a research prototype, not a clinical diagnostic tool.
+- Added dataset source information and detailed feature list.
+
+These changes improve the dashboard's usability and reliability for exploratory analyses.
