@@ -142,6 +142,15 @@ def evaluate_model(patient_files=None):
 
     if patient_files is None:
         patient_files = load_patient_files()
+        # Filter to held‑out test patients if IDs file exists
+        test_ids_path = os.path.join(os.path.dirname(__file__), "saved_models", "test_patient_ids.txt")
+        if os.path.exists(test_ids_path):
+            with open(test_ids_path) as f:
+                test_ids = {line.strip() for line in f if line.strip()}
+            patient_files = [pf for pf in patient_files if os.path.basename(pf) in test_ids]
+            print(f"Evaluating on {len(patient_files)} held‑out test patients.")
+        else:
+            print("Warning: test_patient_ids.txt not found; evaluating on all patients.")
 
     X, y = build_evaluation_dataset(
         patient_files

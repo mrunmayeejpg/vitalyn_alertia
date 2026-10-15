@@ -372,6 +372,14 @@ def main():
         random_state=RANDOM_STATE
     )
 
+    # Save test patient IDs for evaluation
+    TEST_IDS_PATH = os.path.join(MODEL_DIR, "test_patient_ids.txt")
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    with open(TEST_IDS_PATH, "w") as f:
+        for path in test_files:
+            f.write(os.path.basename(path) + "\n")
+    print(f"Saved test patient IDs to {TEST_IDS_PATH}")
+
     print(
         f"\nTraining patients: {len(train_files):,}"
     )
